@@ -1,0 +1,9 @@
+running: cd "/Users/oluwoleadetifa/Downloads/QEaaS/auth_server/target/debug/build/oqs-sys-023b35a378ebd28b/out/build" && CMAKE_PREFIX_PATH="" LC_ALL="C" "cmake" "/Users/oluwoleadetifa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/oqs-sys-0.10.1+liboqs-0.12.0/liboqs" "-B" "/Users/oluwoleadetifa/Downloads/QEaaS/auth_server/target/debug/build/oqs-sys-023b35a378ebd28b/out/build" "-DCMAKE_OSX_ARCHITECTURES=arm64" "-DOQS_BUILD_ONLY_LIB=Yes" "-DOQS_DIST_BUILD=Yes" "-DOQS_ENABLE_KEM_BIKE=Yes" "-DOQS_ENABLE_KEM_CLASSIC_MCELIECE=Yes" "-DOQS_ENABLE_KEM_FRODOKEM=Yes" "-DOQS_ENABLE_KEM_HQC=Yes" "-DOQS_ENABLE_KEM_KYBER=Yes" "-DOQS_ENABLE_KEM_ML_KEM=Yes" "-DOQS_ENABLE_KEM_NTRUPRIME=Yes" "-DOQS_ENABLE_SIG_CROSS=Yes" "-DOQS_ENABLE_SIG_DILITHIUM=Yes" "-DOQS_ENABLE_SIG_FALCON=Yes" "-DOQS_ENABLE_SIG_MAYO=Yes" "-DOQS_ENABLE_SIG_ML_DSA=Yes" "-DOQS_ENABLE_SIG_SPHINCS=Yes" "-DOQS_USE_OPENSSL=Yes" "-DCMAKE_INSTALL_PREFIX=/Users/oluwoleadetifa/Downloads/QEaaS/auth_server/target/debug/build/oqs-sys-023b35a378ebd28b/out" "-DCMAKE_C_FLAGS= -ffunction-sections -fdata-sections -fPIC --target=arm64-apple-macosx -mmacosx-version-min=15.5 -w" "-DCMAKE_C_COMPILER=/usr/bin/cc" "-DCMAKE_CXX_FLAGS= -ffunction-sections -fdata-sections -fPIC --target=arm64-apple-macosx -mmacosx-version-min=15.5 -w" "-DCMAKE_CXX_COMPILER=/usr/bin/c++" "-DCMAKE_ASM_FLAGS= -ffunction-sections -fdata-sections -fPIC --target=arm64-apple-macosx -mmacosx-version-min=15.5 -w" "-DCMAKE_ASM_COMPILER=/usr/bin/cc" "-DCMAKE_BUILD_TYPE=Release"
+CMake Warning:
+  Manually-specified variables were not used by the project:
+
+    CMAKE_CXX_COMPILER
+    CMAKE_CXX_FLAGS
+
+
+running: cd "/Users/oluwoleadetifa/Downloads/QEaaS/auth_server/target/debug/build/oqs-sys-023b35a378ebd28b/out/build" && LC_ALL="C" "cmake" "--build" "/Users/oluwoleadetifa/Downloads/QEaaS/auth_server/target/debug/build/oqs-sys-023b35a378ebd28b/out/build" "--target" "install" "--config" "Release" "--parallel" "8"
