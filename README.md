@@ -6,9 +6,9 @@ The system provides authenticated access to entropy sourced from a Quantum Rando
 
 ---
 
-# 📌 Current Status
+#  Current Status
 
-## ✅ Completed
+## Completed
 
 ### 1. Hardened QRNG Entropy Service
 - Device enrollment enforced
@@ -48,7 +48,7 @@ msg = device_id || 0x00 || n(u64 LE) || 0x00 || nonce
 
 ---
 
-# 🧠 System Architecture
+#  System Architecture
 
 ## Components
 
@@ -81,19 +81,25 @@ Responsible for:
 
 ---
 
-# 📂 File Structure
+#  File Structure
 benchmark_client/
+
 ├── enroll.rs # Bulk device enrollment
+
 ├── loadtest.rs # Load testing engine
+
 ├── message.rs # Canonical message + signing logic
+
 ├── storage.rs # users.jsonl read/write
+
 ├── models.rs # Shared structs
+
 └── main.rs # CLI entry point
 
 
 ---
 
-# 🔐 Device Lifecycle
+# Device Lifecycle
 
 ## 1. Enrollment Phase
 
@@ -181,11 +187,11 @@ Compare:
 System	Expected Outcome
 Direct QRNG	Low throughput, high latency
 Hybrid Model	High throughput, stable latency
-🔹 4. Extended Security Features
+- 4. Extended Security Features
 TTL-based nonce expiration
 Enhanced replay semantics
 Optional client-side verification
-🔹 5. QTPM Integration (Future Work)
+- 5. QTPM Integration (Future Work)
 Use QEaaS as entropy backend
 Implement TPM-like interface in Rust
 Evaluate secure key generation pipelines
