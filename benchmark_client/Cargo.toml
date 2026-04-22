@@ -1,0 +1,21 @@
+# benchmark_client/Cargo.toml
+[package]
+name = "benchmark_client"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+rand = "0.8"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+
+
+client_iot = { path = "../client_iot" }
+oqs = "0.11.0"
