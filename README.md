@@ -124,7 +124,6 @@ Credentials are saved locally:
 Stored in:
 ```
 users.jsonl
-```
 ## 2. Request Phase
 
 Each entropy request includes:
