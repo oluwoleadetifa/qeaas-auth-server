@@ -119,11 +119,13 @@ Credentials are saved locally:
   "kem_pk_b64": "...",
   "sig_pk_b64": "...",
   "sig_sk_b64": "..."
-}```
+}
+```
 
 Stored in:
 ```
 users.jsonl
+```
 ## 2. Request Phase
 
 Each entropy request includes:
@@ -138,16 +140,18 @@ device_id || 0x00 || n(u64 LE) || 0x00 || nonce
 
 ## Usage
 1. Enroll Devices
-cargo run --release -- enroll \
+```cargo run --release -- enroll \
   --base-url http://127.0.0.1:3000 \
   --count 100 \
   --out users.jsonl
+```
 2. Run Load Test
-cargo run --release -- loadtest \
+```cargo run --release -- loadtest \
   --base-url http://127.0.0.1:3000 \
   --users users.jsonl \
   --concurrency 10 \
   --duration 30
+```
 ### Metrics Collected
 Total requests
 Successful responses (200)
@@ -213,6 +217,7 @@ Always run benchmarks in --release mode
 Do not enroll devices during load testing
 Ensure nonce uniqueness per request
 Verify signature correctness before scaling tests
-👨‍🔬 Author Notes
+
+## Author Notes
 
 This project is part of ongoing research into secure entropy distribution, post-quantum cryptography, and trusted execution environments.
