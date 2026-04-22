@@ -119,11 +119,12 @@ Credentials are saved locally:
   "kem_pk_b64": "...",
   "sig_pk_b64": "...",
   "sig_sk_b64": "..."
-}
+}```
 
 Stored in:
+```
 users.jsonl
-
+```
 ## 2. Request Phase
 
 Each entropy request includes:
