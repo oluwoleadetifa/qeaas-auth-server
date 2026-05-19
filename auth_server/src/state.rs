@@ -113,6 +113,16 @@ impl AppState {
                 )
                 .await?
             }
+            EntropyMode::ParallelHybrid => {
+                EntropySource::parallel_hybrid(
+                    http.clone(),
+                    qrng_base_url.clone(),
+                    config::hybrid_qrng_seed_size(),
+                    config::hybrid_reseed_after_bytes(),
+                    config::hybrid_pool_size()?,
+                )
+                .await?
+            }
         };
 
         // You can wire these from config.rs; for now use defaults if you don’t have them yet.

@@ -174,10 +174,11 @@ pub async fn request_entropy(
     }
 
     // 5) Fetch entropy from the configured source
-    let entropy_bytes = match state.entropy.bytes(req.n).await {
-        Ok(b) => b,
+    let entropy_output = match state.entropy.bytes_with_stats(req.n).await {
+        Ok(output) => output,
         Err(e) => return bad_gateway(format!("entropy fetch failed: {e}")),
     };
+    let entropy_bytes = entropy_output.bytes;
 
     // 6) Encapsulate to client KEM pk (Kyber)
     let (ct_bytes, ss_bytes) = match state.pq.encapsulate_to_client_kem_pk_bytes(&device.kem_pk) {
@@ -235,15 +236,21 @@ pub async fn request_entropy(
         server_signature_b64: general_purpose::STANDARD.encode(&server_sig),
     };
 
-    let stats = state.entropy.stats().await;
+    let stats = entropy_output.stats;
     tracing::info!(
         entropy_mode = stats.entropy_mode,
+        pool_size = stats.pool_size,
+        shard_id = stats.shard_id,
         reseed_count = stats.reseed_count,
         bytes_served_since_reseed = stats.bytes_served_since_reseed,
+        bytes_served = stats.bytes_served,
         request_size_n = resp.n,
         request_latency_us = request_start.elapsed().as_micros() as u64,
         reseed_failures = stats.reseed_failures,
         qrng_seed_size = stats.qrng_seed_size,
+        lock_wait_us = stats.lock_wait_us,
+        entropy_wait_us = stats.lock_wait_us,
+        total_entropy_wait_us = stats.total_entropy_wait_us,
         "entropy request served"
     );
 

@@ -43,6 +43,19 @@ pub fn hybrid_qrng_seed_size() -> usize {
         .unwrap_or(32)
 }
 
+pub fn hybrid_pool_size() -> anyhow::Result<usize> {
+    let value = std::env::var("HYBRID_POOL_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8);
+
+    if value == 0 {
+        anyhow::bail!("HYBRID_POOL_SIZE must be greater than zero");
+    }
+
+    Ok(value)
+}
+
 pub fn http_timeout() -> Duration {
     Duration::from_secs(5)
 }
