@@ -1,15 +1,4 @@
     Blocking waiting for file lock on package cache
-    Updating crates.io index
-error: failed to select a version for `oqs-sys`.
-    ... required by package `oqs v0.10.0`
-    ... which satisfies dependency `oqs = "^0.10"` of package `client_iot v0.1.0 (/Users/oluwoleadetifa/Downloads/qeaas-auth-server/client_iot)`
-    ... which satisfies path dependency `client_iot` (locked to 0.1.0) of package `benchmark_client v0.1.0 (/Users/oluwoleadetifa/Downloads/qeaas-auth-server/benchmark_client)`
-versions that meet the requirements `^0.10.0` are: 0.10.1+liboqs-0.12.0, 0.10.0+liboqs-0.12.0
-
-package `oqs-sys` links to the native library `oqs`, but it conflicts with a previous package which links to `oqs` as well:
-package `oqs-sys v0.11.0+liboqs-0.13.0`
-    ... which satisfies dependency `oqs-sys = "^0.11.0"` of package `oqs v0.11.0`
-    ... which satisfies dependency `oqs = "^0.11.0"` of package `benchmark_client v0.1.0 (/Users/oluwoleadetifa/Downloads/qeaas-auth-server/benchmark_client)`
-Only one package in the dependency graph may specify the same links value. This helps ensure that only one copy of a native library is linked in the final binary. Try to adjust your dependencies so that only one package uses the `links = "oqs"` value. For more information, see https://doc.rust-lang.org/cargo/reference/resolver.html#links.
-
-failed to select a version for `oqs-sys` which could resolve this conflict
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.53s

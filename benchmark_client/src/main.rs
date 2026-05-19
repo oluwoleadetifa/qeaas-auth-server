@@ -42,6 +42,12 @@ enum Commands {
         duration: u64,
         #[arg(long, default_value = "users.jsonl")]
         users: String,
+        #[arg(long, default_value = "benchmark")]
+        label: String,
+        #[arg(long)]
+        csv_out: Option<String>,
+        #[arg(long)]
+        md_out: Option<String>,
     },
 }
 
@@ -63,6 +69,9 @@ async fn main() -> Result<()> {
             concurrency,
             duration,
             users,
+            label,
+            csv_out,
+            md_out,
         } => {
             let stored_users = load_users(&users)?;
             let cfg = BenchmarkConfig {
@@ -71,6 +80,9 @@ async fn main() -> Result<()> {
                 concurrency,
                 duration_secs: duration,
                 users_file: users,
+                label,
+                csv_out,
+                md_out,
             };
             run_loadtest(cfg, stored_users).await?;
         }
@@ -78,5 +90,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
-

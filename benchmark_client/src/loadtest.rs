@@ -1,10 +1,10 @@
 // benchmark_client/src/loadtest.rs
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
 use std::time::{Duration, Instant};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use anyhow::{Context, Result};
 use futures::future::join_all;
@@ -14,12 +14,9 @@ use tokio::sync::Mutex;
 use crate::message::build_signed_request;
 use crate::models::{BenchmarkConfig, SigningContext, StoredUser};
 
-use client_iot::{
-    client::IotClient,
-    config::ClientConfig,
-    pq::DevicePq,
-};
+use client_iot::pq::DevicePq;
 use oqs::{kem, sig};
+use std::io::Write;
 
 #[derive(Default, Debug)]
 pub struct Metrics {
@@ -29,6 +26,25 @@ pub struct Metrics {
     pub invalid_401: AtomicU64,
     pub other_status: AtomicU64,
     pub latencies_micros: Mutex<Vec<u128>>,
+}
+
+#[derive(Debug)]
+struct BenchmarkSummary {
+    label: String,
+    base_url: String,
+    n: u32,
+    concurrency: usize,
+    duration_secs: u64,
+    total: u64,
+    success: u64,
+    failures: u64,
+    replay_409: u64,
+    invalid_401: u64,
+    other_status: u64,
+    throughput_req_s: f64,
+    mean_latency_us: f64,
+    p95_latency_us: u128,
+    p99_latency_us: u128,
 }
 
 pub async fn run_loadtest(cfg: BenchmarkConfig, users: Vec<StoredUser>) -> Result<()> {
@@ -60,7 +76,9 @@ pub async fn run_loadtest(cfg: BenchmarkConfig, users: Vec<StoredUser>) -> Resul
     }
 
     let _ = join_all(tasks).await;
-    print_report(&cfg, &metrics).await;
+    let summary = summarize(&cfg, &metrics).await;
+    print_report(&summary);
+    write_reports(&cfg, &summary)?;
 
     Ok(())
 }
@@ -138,35 +156,30 @@ fn build_signing_contexts(_base_url: &str, users: &[StoredUser]) -> Result<Vec<S
 
         out.push(SigningContext {
             device_id: ctx.device_id,
-            pq: ctx.pq,
+            pq: Arc::clone(&ctx.pq),
         });
     }
 
     Ok(out)
 }
 
-
 fn rebuild_device_context(user: &StoredUser) -> Result<SigningContext> {
     let sig_sk = STANDARD
         .decode(&user.sig_sk_b64)
         .context("failed to decode sig_sk_b64")?;
 
-    let mut pq = DevicePq::new(
-        kem::Algorithm::Kyber1024,
-        sig::Algorithm::Dilithium5,
-    )?;
+    let mut pq = DevicePq::new(kem::Algorithm::Kyber1024, sig::Algorithm::Dilithium5)?;
 
     // ⚠️ This method MUST exist or be added
     pq.set_sig_sk(sig_sk)?;
 
     Ok(SigningContext {
         device_id: user.device_id.clone(),
-        pq,
+        pq: Arc::new(pq),
     })
 }
 
-
-async fn print_report(cfg: &BenchmarkConfig, metrics: &Metrics) {
+async fn summarize(cfg: &BenchmarkConfig, metrics: &Metrics) -> BenchmarkSummary {
     let success = metrics.success.load(Ordering::Relaxed);
     let failures = metrics.failures.load(Ordering::Relaxed);
     let total = success + failures;
@@ -184,20 +197,145 @@ async fn print_report(cfg: &BenchmarkConfig, metrics: &Metrics) {
     let p99 = percentile(&latencies, 99);
     let throughput = success as f64 / cfg.duration_secs as f64;
 
+    BenchmarkSummary {
+        label: cfg.label.clone(),
+        base_url: cfg.base_url.clone(),
+        n: cfg.n,
+        concurrency: cfg.concurrency,
+        duration_secs: cfg.duration_secs,
+        total,
+        success,
+        failures,
+        replay_409: metrics.replay_409.load(Ordering::Relaxed),
+        invalid_401: metrics.invalid_401.load(Ordering::Relaxed),
+        other_status: metrics.other_status.load(Ordering::Relaxed),
+        throughput_req_s: throughput,
+        mean_latency_us: mean,
+        p95_latency_us: p95,
+        p99_latency_us: p99,
+    }
+}
+
+fn print_report(summary: &BenchmarkSummary) {
     println!("\n=== Benchmark Report ===");
-    println!("Concurrency      : {}", cfg.concurrency);
-    println!("Duration (s)     : {}", cfg.duration_secs);
-    println!("Request size (n) : {}", cfg.n);
-    println!("Total requests   : {}", total);
-    println!("Success (200)    : {}", success);
-    println!("Failures         : {}", failures);
-    println!("Replay 409       : {}", metrics.replay_409.load(Ordering::Relaxed));
-    println!("Invalid 401      : {}", metrics.invalid_401.load(Ordering::Relaxed));
-    println!("Other failures   : {}", metrics.other_status.load(Ordering::Relaxed));
-    println!("Throughput req/s : {:.2}", throughput);
-    println!("Mean latency us  : {:.2}", mean);
-    println!("P95 latency us   : {}", p95);
-    println!("P99 latency us   : {}", p99);
+    println!("Label            : {}", summary.label);
+    println!("Concurrency      : {}", summary.concurrency);
+    println!("Duration (s)     : {}", summary.duration_secs);
+    println!("Request size (n) : {}", summary.n);
+    println!("Total requests   : {}", summary.total);
+    println!("Success (200)    : {}", summary.success);
+    println!("Failures         : {}", summary.failures);
+    println!("Replay 409       : {}", summary.replay_409);
+    println!("Invalid 401      : {}", summary.invalid_401);
+    println!("Other failures   : {}", summary.other_status);
+    println!("Throughput req/s : {:.2}", summary.throughput_req_s);
+    println!("Mean latency us  : {:.2}", summary.mean_latency_us);
+    println!("P95 latency us   : {}", summary.p95_latency_us);
+    println!("P99 latency us   : {}", summary.p99_latency_us);
+}
+
+fn write_reports(cfg: &BenchmarkConfig, summary: &BenchmarkSummary) -> Result<()> {
+    if let Some(path) = &cfg.csv_out {
+        write_csv_report(path, summary)?;
+    }
+
+    if let Some(path) = &cfg.md_out {
+        write_markdown_report(path, summary)?;
+    }
+
+    Ok(())
+}
+
+fn write_csv_report(path: &str, summary: &BenchmarkSummary) -> Result<()> {
+    let exists = std::path::Path::new(path).exists();
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("failed to open CSV report: {path}"))?;
+
+    if !exists {
+        writeln!(
+            f,
+            "label,base_url,n,concurrency,duration_secs,total,success,failures,replay_409,invalid_401,other_failures,throughput_req_s,mean_latency_us,p95_latency_us,p99_latency_us"
+        )?;
+    }
+
+    writeln!(
+        f,
+        "{},{},{},{},{},{},{},{},{},{},{},{:.2},{:.2},{},{}",
+        csv_escape(&summary.label),
+        csv_escape(&summary.base_url),
+        summary.n,
+        summary.concurrency,
+        summary.duration_secs,
+        summary.total,
+        summary.success,
+        summary.failures,
+        summary.replay_409,
+        summary.invalid_401,
+        summary.other_status,
+        summary.throughput_req_s,
+        summary.mean_latency_us,
+        summary.p95_latency_us,
+        summary.p99_latency_us
+    )?;
+
+    Ok(())
+}
+
+fn write_markdown_report(path: &str, summary: &BenchmarkSummary) -> Result<()> {
+    let exists = std::path::Path::new(path).exists();
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("failed to open Markdown report: {path}"))?;
+
+    if !exists {
+        writeln!(f, "# QEaaS Benchmark Summary\n")?;
+        writeln!(
+            f,
+            "| label | n | concurrency | duration_s | total | success | failures | 409 | 401 | other | req/s | mean_us | p95_us | p99_us |"
+        )?;
+        writeln!(
+            f,
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        )?;
+    }
+
+    writeln!(
+        f,
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {:.2} | {} | {} |",
+        md_escape(&summary.label),
+        summary.n,
+        summary.concurrency,
+        summary.duration_secs,
+        summary.total,
+        summary.success,
+        summary.failures,
+        summary.replay_409,
+        summary.invalid_401,
+        summary.other_status,
+        summary.throughput_req_s,
+        summary.mean_latency_us,
+        summary.p95_latency_us,
+        summary.p99_latency_us
+    )?;
+
+    Ok(())
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains([',', '"', '\n']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn md_escape(value: &str) -> String {
+    value.replace('|', "\\|")
 }
 
 fn percentile(values: &[u128], p: usize) -> u128 {
@@ -207,5 +345,3 @@ fn percentile(values: &[u128], p: usize) -> u128 {
     let idx = ((p as f64 / 100.0) * (values.len().saturating_sub(1) as f64)).round() as usize;
     values[idx]
 }
-
-

@@ -8,7 +8,6 @@ use base64::{engine::general_purpose, Engine as _};
 
 use crate::{
     crypto,
-    entropy,
     model::*,
     state::{AppState, DeviceKeys},
 };
@@ -28,7 +27,8 @@ fn build_client_msg(device_id: &str, n: usize, nonce: &[u8]) -> Vec<u8> {
 
 fn build_aad(device_id: &str, n: usize, nonce: &[u8], ct_bytes: &[u8]) -> Vec<u8> {
     // aad = device_id || 0x00 || n(u64 LE) || 0x00 || nonce || 0x00 || kem_ct
-    let mut aad = Vec::with_capacity(device_id.len() + 1 + 8 + 1 + nonce.len() + 1 + ct_bytes.len());
+    let mut aad =
+        Vec::with_capacity(device_id.len() + 1 + 8 + 1 + nonce.len() + 1 + ct_bytes.len());
     aad.extend_from_slice(device_id.as_bytes());
     aad.push(0);
     aad.extend_from_slice(&(n as u64).to_le_bytes());
@@ -49,7 +49,17 @@ fn build_resp_tbs(
 ) -> Vec<u8> {
     // resp_tbs = device_id || 0x00 || n(u64 LE) || 0x00 || nonce || 0x00 || kem_ct || 0x00 || aead_nonce12 || 0x00 || entropy_ct
     let mut tbs = Vec::with_capacity(
-        device_id.len() + 1 + 8 + 1 + nonce.len() + 1 + ct_bytes.len() + 1 + 12 + 1 + entropy_ct.len(),
+        device_id.len()
+            + 1
+            + 8
+            + 1
+            + nonce.len()
+            + 1
+            + ct_bytes.len()
+            + 1
+            + 12
+            + 1
+            + entropy_ct.len(),
     );
     tbs.extend_from_slice(device_id.as_bytes());
     tbs.push(0);
@@ -87,10 +97,7 @@ fn bad_gateway(msg: String) -> axum::response::Response {
 
 /// ----- Handlers -----
 
-pub async fn enroll(
-    State(state): State<AppState>,
-    Json(payload): Json<EnrollRequest>,
-) -> Response {
+pub async fn enroll(State(state): State<AppState>, Json(payload): Json<EnrollRequest>) -> Response {
     let kem_pk = match b64_decode("kem_pk_b64", &payload.kem_pk_b64) {
         Ok(v) => v,
         Err(resp) => return resp,
@@ -119,6 +126,8 @@ pub async fn request_entropy(
     State(state): State<AppState>,
     Json(req): Json<EntropyRequest>,
 ) -> impl IntoResponse {
+    let request_start = std::time::Instant::now();
+
     // 1) Lookup device keys
     let device = {
         let devices = state.devices.read().await;
@@ -164,12 +173,11 @@ pub async fn request_entropy(
         return conflict("replay detected");
     }
 
-    // 5) Fetch entropy from QRNG server
-    let entropy_bytes =
-        match entropy::fetch_entropy_bytes(&state.http, &state.qrng_base_url, req.n).await {
-            Ok(b) => b,
-            Err(e) => return bad_gateway(format!("qrng fetch failed: {e}")),
-        };
+    // 5) Fetch entropy from the configured source
+    let entropy_bytes = match state.entropy.bytes(req.n).await {
+        Ok(b) => b,
+        Err(e) => return bad_gateway(format!("entropy fetch failed: {e}")),
+    };
 
     // 6) Encapsulate to client KEM pk (Kyber)
     let (ct_bytes, ss_bytes) = match state.pq.encapsulate_to_client_kem_pk_bytes(&device.kem_pk) {
@@ -180,7 +188,9 @@ pub async fn request_entropy(
     // 7) HKDF(ss, salt=client_nonce) -> AEAD key
     let key32 = match crypto::derive_aead_key(&ss_bytes, &nonce) {
         Ok(k) => k,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "key derivation failed").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "key derivation failed").into_response()
+        }
     };
 
     // 8) AEAD nonce (12 bytes) derived from client nonce (baseline)
@@ -192,7 +202,9 @@ pub async fn request_entropy(
     // 10) Encrypt entropy -> ciphertext+tag
     let entropy_ct = match crypto::aead_encrypt(&key32, &aead_nonce12, &aad, &entropy_bytes) {
         Ok(v) => v,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "aead encrypt failed").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "aead encrypt failed").into_response()
+        }
     };
 
     // 11) Sign response transcript over ciphertext
@@ -207,7 +219,9 @@ pub async fn request_entropy(
 
     let server_sig = match state.pq.sign(&resp_tbs) {
         Ok(s) => s,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "server signing failed").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "server signing failed").into_response()
+        }
     };
 
     // 12) Build response
@@ -221,16 +235,25 @@ pub async fn request_entropy(
         server_signature_b64: general_purpose::STANDARD.encode(&server_sig),
     };
 
+    let stats = state.entropy.stats().await;
+    tracing::info!(
+        entropy_mode = stats.entropy_mode,
+        reseed_count = stats.reseed_count,
+        bytes_served_since_reseed = stats.bytes_served_since_reseed,
+        request_size_n = resp.n,
+        request_latency_us = request_start.elapsed().as_micros() as u64,
+        reseed_failures = stats.reseed_failures,
+        qrng_seed_size = stats.qrng_seed_size,
+        "entropy request served"
+    );
+
     (StatusCode::OK, Json(resp)).into_response()
 }
 
 /// Debug endpoint: fetch entropy from QRNG server via auth server.
 /// Returns raw bytes as application/octet-stream.
-pub async fn entropy_raw(
-    State(state): State<AppState>,
-    Path(n): Path<usize>,
-) -> impl IntoResponse {
-    match entropy::fetch_entropy_bytes(&state.http, &state.qrng_base_url, n).await {
+pub async fn entropy_raw(State(state): State<AppState>, Path(n): Path<usize>) -> impl IntoResponse {
+    match state.entropy.bytes(n).await {
         Ok(bytes) => {
             let mut headers = HeaderMap::new();
             headers.insert("content-type", "application/octet-stream".parse().unwrap());

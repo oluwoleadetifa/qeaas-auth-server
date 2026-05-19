@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use client_iot::client::IotClient;
+use client_iot::pq::DevicePq;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredUser {
@@ -33,6 +33,9 @@ pub struct BenchmarkConfig {
     pub concurrency: usize,
     pub duration_secs: u64,
     pub users_file: String,
+    pub label: String,
+    pub csv_out: Option<String>,
+    pub md_out: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,5 +47,5 @@ pub struct DeviceContext {
 #[derive(Clone)]
 pub struct SigningContext {
     pub device_id: String,
-    pub pq: DevicePq,
+    pub pq: Arc<DevicePq>,
 }
