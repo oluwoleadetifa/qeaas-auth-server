@@ -35,4 +35,3 @@ pub struct EntropyResponse {
 
     pub server_signature_b64: String,
 }
-

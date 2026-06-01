@@ -14,6 +14,13 @@ use serde::Deserialize;
 use sha2::Digest;
 use tokio::sync::Mutex;
 
+#[async_trait::async_trait]
+#[allow(dead_code)]
+pub trait EntropyProvider: Send + Sync {
+    async fn fill_entropy(&self, buf: &mut [u8]) -> Result<(), EntropyError>;
+    fn mode_name(&self) -> &'static str;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntropyMode {
     DirectQrng,
@@ -51,6 +58,7 @@ pub struct EntropySource {
     inner: Arc<EntropySourceInner>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum EntropySourceInner {
     DirectQrng {
         http: reqwest::Client,
@@ -119,6 +127,14 @@ pub struct EntropyStats {
 }
 
 impl EntropySource {
+    pub fn mode_name(&self) -> &'static str {
+        match self.inner.as_ref() {
+            EntropySourceInner::DirectQrng { .. } => EntropyMode::DirectQrng.as_str(),
+            EntropySourceInner::HybridCsprng { .. } => EntropyMode::HybridCsprng.as_str(),
+            EntropySourceInner::ParallelHybrid { .. } => EntropyMode::ParallelHybrid.as_str(),
+        }
+    }
+
     pub async fn direct_qrng(http: reqwest::Client, base_url: String) -> Self {
         tracing::info!(
             entropy_mode = EntropyMode::DirectQrng.as_str(),
@@ -360,6 +376,7 @@ impl EntropySource {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn try_reseed_parallel_shard(
         &self,
         http: &reqwest::Client,
@@ -422,6 +439,19 @@ impl EntropySource {
     }
 }
 
+#[async_trait::async_trait]
+impl EntropyProvider for EntropySource {
+    async fn fill_entropy(&self, buf: &mut [u8]) -> Result<(), EntropyError> {
+        let output = self.bytes_with_stats(buf.len()).await?;
+        buf.copy_from_slice(&output.bytes);
+        Ok(())
+    }
+
+    fn mode_name(&self) -> &'static str {
+        EntropySource::mode_name(self)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct QrngResponse {
     pub length: usize,
@@ -441,6 +471,12 @@ pub async fn fetch_entropy_bytes(
     }
 
     let body: QrngResponse = resp.json().await.map_err(EntropyError::BadJson)?;
+    if body.length != n {
+        return Err(EntropyError::LengthMismatch {
+            expected: n,
+            got: body.length,
+        });
+    }
 
     let bytes = hex::decode(&body.data_hex).map_err(EntropyError::BadHex)?;
     if bytes.len() != n {
@@ -500,4 +536,30 @@ pub enum EntropyError {
     InvalidSeedSize,
     #[error("HYBRID_POOL_SIZE must be greater than zero")]
     InvalidPoolSize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EntropyMode;
+    use std::str::FromStr;
+
+    #[test]
+    fn entropy_mode_selection_accepts_supported_modes() {
+        assert_eq!(
+            EntropyMode::from_str("direct_qrng").unwrap(),
+            EntropyMode::DirectQrng
+        );
+        assert_eq!(
+            EntropyMode::from_str("hybrid_csprng").unwrap(),
+            EntropyMode::HybridCsprng
+        );
+        assert_eq!(
+            EntropyMode::from_str("parallel_hybrid").unwrap(),
+            EntropyMode::ParallelHybrid
+        );
+        assert_eq!(
+            EntropyMode::from_str("hybrid_pool").unwrap(),
+            EntropyMode::ParallelHybrid
+        );
+    }
 }

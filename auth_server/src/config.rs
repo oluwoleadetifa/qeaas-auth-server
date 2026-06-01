@@ -2,6 +2,10 @@ use std::time::Duration;
 
 use crate::entropy::EntropyMode;
 
+fn env_any(names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| std::env::var(name).ok())
+}
+
 pub fn auth_addr() -> String {
     std::env::var("AUTH_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string())
 }
@@ -25,35 +29,69 @@ pub fn nonce_cleanup_interval_secs() -> u64 {
 }
 
 pub fn entropy_mode() -> anyhow::Result<EntropyMode> {
-    let value = std::env::var("ENTROPY_MODE").unwrap_or_else(|_| "direct_qrng".to_string());
+    let value = env_any(&["ENTROPY_MODE", "QEaaS_ENTROPY_MODE", "QEAAS_ENTROPY_MODE"])
+        .unwrap_or_else(|| "direct_qrng".to_string());
     value.parse()
 }
 
 pub fn hybrid_reseed_after_bytes() -> usize {
-    std::env::var("HYBRID_RESEED_AFTER_BYTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1024 * 1024)
+    env_any(&[
+        "HYBRID_RESEED_AFTER_BYTES",
+        "QEAAAS_RESEED_BYTES",
+        "QEAAS_RESEED_BYTES",
+        "QEaaS_RESEED_BYTES",
+    ])
+    .and_then(|v| v.parse().ok())
+    .unwrap_or(1024 * 1024)
 }
 
 pub fn hybrid_qrng_seed_size() -> usize {
-    std::env::var("HYBRID_QRNG_SEED_SIZE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(32)
+    env_any(&[
+        "HYBRID_QRNG_SEED_SIZE",
+        "QEAAAS_QRNG_SEED_SIZE",
+        "QEAAS_QRNG_SEED_SIZE",
+    ])
+    .and_then(|v| v.parse().ok())
+    .unwrap_or(32)
 }
 
 pub fn hybrid_pool_size() -> anyhow::Result<usize> {
-    let value = std::env::var("HYBRID_POOL_SIZE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8);
+    let value = env_any(&[
+        "HYBRID_POOL_SIZE",
+        "QEAAAS_HYBRID_POOL_SIZE",
+        "QEAAS_HYBRID_POOL_SIZE",
+        "QEaaS_HYBRID_POOL_SIZE",
+    ])
+    .and_then(|v| v.parse().ok())
+    .unwrap_or(8);
 
     if value == 0 {
         anyhow::bail!("HYBRID_POOL_SIZE must be greater than zero");
     }
 
     Ok(value)
+}
+
+pub fn enable_stage_timing() -> bool {
+    env_any(&[
+        "ENABLE_STAGE_TIMING",
+        "QEAAAS_ENABLE_STAGE_TIMING",
+        "QEAAS_ENABLE_STAGE_TIMING",
+        "QEaaS_ENABLE_STAGE_TIMING",
+    ])
+    .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+    .unwrap_or(false)
+}
+
+pub fn max_entropy_request_bytes() -> usize {
+    env_any(&[
+        "QEAAAS_MAX_ENTROPY_BYTES",
+        "QEAAS_MAX_ENTROPY_BYTES",
+        "QEaaS_MAX_ENTROPY_BYTES",
+        "MAX_ENTROPY_REQUEST_BYTES",
+    ])
+    .and_then(|v| v.parse().ok())
+    .unwrap_or(1024 * 1024)
 }
 
 pub fn http_timeout() -> Duration {

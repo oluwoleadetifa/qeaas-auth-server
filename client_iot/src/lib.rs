@@ -1,9 +1,8 @@
 pub mod client;
 pub mod config;
+pub mod crypto;
 pub mod models;
 pub mod pq;
-pub mod crypto;
-
 
 use anyhow::Context;
 use oqs::{kem, sig};
@@ -29,18 +28,13 @@ pub async fn run_once(cfg: ClientConfig, device_id: &str) -> anyhow::Result<RunO
     let pq = DevicePq::new(kem_alg, sig_alg).context("DevicePq::new failed")?;
     let client = IotClient::new(cfg.auth_base.clone());
 
-    let enroll_resp = client.enroll(&device_id, &pq).await?;
+    let enroll_resp = client.enroll(device_id, &pq).await?;
     println!("Enrolled device {}", &device_id);
     println!("Server KEM alg: {}", enroll_resp.server_kem_alg);
     println!("Server SIG alg: {}", enroll_resp.server_sig_alg);
 
     let (_resp, entropy) = client
-        .request_entropy(
-            &device_id,
-            cfg.n,
-            &pq,
-            &enroll_resp.server_sig_pk_b64,
-        )
+        .request_entropy(device_id, cfg.n, &pq, &enroll_resp.server_sig_pk_b64)
         .await?;
 
     let h = Sha256::digest(&entropy);

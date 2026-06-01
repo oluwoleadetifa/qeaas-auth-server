@@ -1,0 +1,43 @@
+# Rust build outputs
+target/
+**/target/
+
+# Local environment files
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# Logs
+*.log
+
+# Generated enrollment credentials
+users.jsonl
+users_*.jsonl
+*users.jsonl
+*users_*.jsonl
+users-*.jsonl
+
+# Generated benchmark results
+results/*.csv
+results/*.jsonl
+results/*.md
+!results/.gitkeep
+
+# Temporary smoke-test files
+tmp/
+*.tmp
+qeaas-smoke*
+smoke-*.csv
+smoke-*.jsonl
+smoke-*.md
+smoke-*.log
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/

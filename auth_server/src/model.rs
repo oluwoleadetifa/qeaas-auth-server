@@ -32,8 +32,8 @@ pub struct EntropyResponse {
     pub kem_ct_b64: String,
 
     // NEW: AEAD outputs
-    pub aead_nonce_b64: String,   // 12 bytes
-    pub entropy_ct_b64: String,   // ciphertext+tag
+    pub aead_nonce_b64: String, // 12 bytes
+    pub entropy_ct_b64: String, // ciphertext+tag
 
     // Auth: server signs transcript (optional but kept)
     pub server_signature_b64: String,
@@ -51,4 +51,3 @@ pub struct ListDevicesResponse {
     pub count: usize,
     pub devices: Vec<DeviceInfo>,
 }
-

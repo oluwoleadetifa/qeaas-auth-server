@@ -5,15 +5,16 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose, Engine as _};
+use serde::Serialize;
 
 use crate::{
-    crypto,
+    config, crypto,
     model::*,
     state::{AppState, DeviceKeys},
 };
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-/// ----- Transcript builders (canonical encoding) -----
-
+// ----- Transcript builders (canonical encoding) -----
 fn build_client_msg(device_id: &str, n: usize, nonce: &[u8]) -> Vec<u8> {
     // msg = device_id || 0x00 || n(u64 LE) || 0x00 || nonce
     let mut msg = Vec::with_capacity(device_id.len() + 1 + 8 + 1 + nonce.len());
@@ -75,8 +76,8 @@ fn build_resp_tbs(
     tbs
 }
 
-/// ----- Small helpers -----
-
+// ----- Small helpers -----
+#[allow(clippy::result_large_err)]
 fn b64_decode(field: &'static str, s: &str) -> Result<Vec<u8>, Response> {
     general_purpose::STANDARD
         .decode(s)
@@ -95,7 +96,77 @@ fn bad_gateway(msg: String) -> axum::response::Response {
     (StatusCode::BAD_GATEWAY, msg).into_response()
 }
 
-/// ----- Handlers -----
+#[derive(Default, Serialize)]
+struct StageTimings {
+    timestamp: u128,
+    entropy_mode: &'static str,
+    device_id: String,
+    payload_size_n: usize,
+    parse_us: Option<u64>,
+    device_lookup_us: Option<u64>,
+    nonce_check_us: Option<u64>,
+    signature_verify_us: Option<u64>,
+    entropy_us: Option<u64>,
+    encapsulation_us: Option<u64>,
+    encryption_us: Option<u64>,
+    response_sign_us: Option<u64>,
+    serialize_us: Option<u64>,
+    total_us: u64,
+    status_code: u16,
+}
+
+fn elapsed_us(start: Instant) -> u64 {
+    start.elapsed().as_micros() as u64
+}
+
+fn unix_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default()
+}
+
+fn log_stage_timing(
+    enabled: bool,
+    state: &AppState,
+    req: &EntropyRequest,
+    timing: &StageTimings,
+    request_start: Instant,
+    status_code: StatusCode,
+) {
+    if !enabled {
+        return;
+    }
+
+    let mut out = StageTimings {
+        timestamp: unix_ms(),
+        entropy_mode: state.entropy.mode_name(),
+        device_id: req.device_id.clone(),
+        payload_size_n: req.n,
+        total_us: elapsed_us(request_start),
+        status_code: status_code.as_u16(),
+        ..StageTimings::default()
+    };
+
+    out.parse_us = timing.parse_us;
+    out.device_lookup_us = timing.device_lookup_us;
+    out.nonce_check_us = timing.nonce_check_us;
+    out.signature_verify_us = timing.signature_verify_us;
+    out.entropy_us = timing.entropy_us;
+    out.encapsulation_us = timing.encapsulation_us;
+    out.encryption_us = timing.encryption_us;
+    out.response_sign_us = timing.response_sign_us;
+    out.serialize_us = timing.serialize_us;
+
+    if let Ok(line) = serde_json::to_string(&out) {
+        println!("{line}");
+    }
+}
+
+// ----- Handlers -----
+pub async fn health() -> impl IntoResponse {
+    (StatusCode::OK, "ok")
+}
 
 pub async fn enroll(State(state): State<AppState>, Json(payload): Json<EnrollRequest>) -> Response {
     let kem_pk = match b64_decode("kem_pk_b64", &payload.kem_pk_b64) {
@@ -126,71 +197,194 @@ pub async fn request_entropy(
     State(state): State<AppState>,
     Json(req): Json<EntropyRequest>,
 ) -> impl IntoResponse {
-    let request_start = std::time::Instant::now();
+    let request_start = Instant::now();
+    let stage_timing_enabled = config::enable_stage_timing();
+    let mut timing = StageTimings::default();
+
+    if req.n > config::max_entropy_request_bytes() {
+        log_stage_timing(
+            stage_timing_enabled,
+            &state,
+            &req,
+            &timing,
+            request_start,
+            StatusCode::BAD_REQUEST,
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "requested entropy too large; max={}",
+                config::max_entropy_request_bytes()
+            ),
+        )
+            .into_response();
+    }
 
     // 1) Lookup device keys
+    let stage_start = Instant::now();
     let device = {
         let devices = state.devices.read().await;
-        match devices.get(&req.device_id) {
-            Some(d) => d.clone(),
-            None => return unauthorized("device not enrolled"),
-        }
+        devices.get(&req.device_id).cloned()
+    };
+    timing.device_lookup_us = Some(elapsed_us(stage_start));
+
+    let Some(device) = device else {
+        log_stage_timing(
+            stage_timing_enabled,
+            &state,
+            &req,
+            &timing,
+            request_start,
+            StatusCode::UNAUTHORIZED,
+        );
+        return unauthorized("device not enrolled");
     };
 
     // 2) Decode inputs
+    let stage_start = Instant::now();
     let nonce = match b64_decode("nonce_b64", &req.nonce_b64) {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => {
+            timing.parse_us = Some(elapsed_us(stage_start));
+            log_stage_timing(
+                stage_timing_enabled,
+                &state,
+                &req,
+                &timing,
+                request_start,
+                StatusCode::BAD_REQUEST,
+            );
+            return resp;
+        }
     };
     let signature = match b64_decode("signature_b64", &req.signature_b64) {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => {
+            timing.parse_us = Some(elapsed_us(stage_start));
+            log_stage_timing(
+                stage_timing_enabled,
+                &state,
+                &req,
+                &timing,
+                request_start,
+                StatusCode::BAD_REQUEST,
+            );
+            return resp;
+        }
     };
+    timing.parse_us = Some(elapsed_us(stage_start));
 
     // 3) Verify client signature FIRST (prevents nonce-cache DoS)
     let msg = build_client_msg(&req.device_id, req.n, &nonce);
+    let stage_start = Instant::now();
     let verified = match state
         .pq
         .verify_with_client_pk_bytes(&device.sig_pk, &msg, &signature)
     {
         Ok(v) => v,
-        Err(_) => return unauthorized("signature verification error"),
+        Err(_) => {
+            timing.signature_verify_us = Some(elapsed_us(stage_start));
+            log_stage_timing(
+                stage_timing_enabled,
+                &state,
+                &req,
+                &timing,
+                request_start,
+                StatusCode::UNAUTHORIZED,
+            );
+            return unauthorized("signature verification error");
+        }
     };
+    timing.signature_verify_us = Some(elapsed_us(stage_start));
 
     if !verified {
+        log_stage_timing(
+            stage_timing_enabled,
+            &state,
+            &req,
+            &timing,
+            request_start,
+            StatusCode::UNAUTHORIZED,
+        );
         return unauthorized("invalid signature");
     }
 
     // 4) Replay protection (nonce cache) AFTER signature is valid
     //    If nonce already used (within TTL), reject replay.
+    let stage_start = Instant::now();
     let fresh = state
         .nonce_cache
         .check_and_insert(&req.device_id, &req.nonce_b64)
         .await;
+    timing.nonce_check_us = Some(elapsed_us(stage_start));
 
     if !fresh {
         // 409 makes it explicit to clients this was a replay
+        log_stage_timing(
+            stage_timing_enabled,
+            &state,
+            &req,
+            &timing,
+            request_start,
+            StatusCode::CONFLICT,
+        );
         return conflict("replay detected");
     }
 
     // 5) Fetch entropy from the configured source
+    let stage_start = Instant::now();
     let entropy_output = match state.entropy.bytes_with_stats(req.n).await {
         Ok(output) => output,
-        Err(e) => return bad_gateway(format!("entropy fetch failed: {e}")),
+        Err(e) => {
+            timing.entropy_us = Some(elapsed_us(stage_start));
+            log_stage_timing(
+                stage_timing_enabled,
+                &state,
+                &req,
+                &timing,
+                request_start,
+                StatusCode::BAD_GATEWAY,
+            );
+            return bad_gateway(format!("entropy fetch failed: {e}"));
+        }
     };
+    timing.entropy_us = Some(elapsed_us(stage_start));
     let entropy_bytes = entropy_output.bytes;
 
     // 6) Encapsulate to client KEM pk (Kyber)
+    let stage_start = Instant::now();
     let (ct_bytes, ss_bytes) = match state.pq.encapsulate_to_client_kem_pk_bytes(&device.kem_pk) {
         Ok(v) => v,
-        Err(_) => return (StatusCode::BAD_REQUEST, "bad client kem pk length").into_response(),
+        Err(_) => {
+            timing.encapsulation_us = Some(elapsed_us(stage_start));
+            log_stage_timing(
+                stage_timing_enabled,
+                &state,
+                &req,
+                &timing,
+                request_start,
+                StatusCode::BAD_REQUEST,
+            );
+            return (StatusCode::BAD_REQUEST, "bad client kem pk length").into_response();
+        }
     };
+    timing.encapsulation_us = Some(elapsed_us(stage_start));
 
     // 7) HKDF(ss, salt=client_nonce) -> AEAD key
+    let stage_start = Instant::now();
     let key32 = match crypto::derive_aead_key(&ss_bytes, &nonce) {
         Ok(k) => k,
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "key derivation failed").into_response()
+            timing.encryption_us = Some(elapsed_us(stage_start));
+            log_stage_timing(
+                stage_timing_enabled,
+                &state,
+                &req,
+                &timing,
+                request_start,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            );
+            return (StatusCode::INTERNAL_SERVER_ERROR, "key derivation failed").into_response();
         }
     };
 
@@ -204,9 +398,19 @@ pub async fn request_entropy(
     let entropy_ct = match crypto::aead_encrypt(&key32, &aead_nonce12, &aad, &entropy_bytes) {
         Ok(v) => v,
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "aead encrypt failed").into_response()
+            timing.encryption_us = Some(elapsed_us(stage_start));
+            log_stage_timing(
+                stage_timing_enabled,
+                &state,
+                &req,
+                &timing,
+                request_start,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            );
+            return (StatusCode::INTERNAL_SERVER_ERROR, "aead encrypt failed").into_response();
         }
     };
+    timing.encryption_us = Some(elapsed_us(stage_start));
 
     // 11) Sign response transcript over ciphertext
     let resp_tbs = build_resp_tbs(
@@ -218,23 +422,36 @@ pub async fn request_entropy(
         &entropy_ct,
     );
 
+    let stage_start = Instant::now();
     let server_sig = match state.pq.sign(&resp_tbs) {
         Ok(s) => s,
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "server signing failed").into_response()
+            timing.response_sign_us = Some(elapsed_us(stage_start));
+            log_stage_timing(
+                stage_timing_enabled,
+                &state,
+                &req,
+                &timing,
+                request_start,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            );
+            return (StatusCode::INTERNAL_SERVER_ERROR, "server signing failed").into_response();
         }
     };
+    timing.response_sign_us = Some(elapsed_us(stage_start));
 
     // 12) Build response
+    let stage_start = Instant::now();
     let resp = EntropyResponse {
         device_id: req.device_id,
         n: req.n,
         nonce_b64: req.nonce_b64,
         kem_ct_b64: general_purpose::STANDARD.encode(&ct_bytes),
-        aead_nonce_b64: general_purpose::STANDARD.encode(&aead_nonce12),
+        aead_nonce_b64: general_purpose::STANDARD.encode(aead_nonce12),
         entropy_ct_b64: general_purpose::STANDARD.encode(&entropy_ct),
         server_signature_b64: general_purpose::STANDARD.encode(&server_sig),
     };
+    timing.serialize_us = Some(elapsed_us(stage_start));
 
     let stats = entropy_output.stats;
     tracing::info!(
@@ -252,6 +469,20 @@ pub async fn request_entropy(
         entropy_wait_us = stats.lock_wait_us,
         total_entropy_wait_us = stats.total_entropy_wait_us,
         "entropy request served"
+    );
+    let log_req = EntropyRequest {
+        device_id: resp.device_id.clone(),
+        n: resp.n,
+        nonce_b64: resp.nonce_b64.clone(),
+        signature_b64: String::new(),
+    };
+    log_stage_timing(
+        stage_timing_enabled,
+        &state,
+        &log_req,
+        &timing,
+        request_start,
+        StatusCode::OK,
     );
 
     (StatusCode::OK, Json(resp)).into_response()

@@ -100,6 +100,25 @@ impl AppState {
 
         let qrng_base_url = config::qrng_base_url();
         let entropy_mode = config::entropy_mode()?;
+        let qrng_seed_size = config::hybrid_qrng_seed_size();
+        let reseed_after_bytes = config::hybrid_reseed_after_bytes();
+        let hybrid_pool_size = if matches!(entropy_mode, EntropyMode::ParallelHybrid) {
+            Some(config::hybrid_pool_size()?)
+        } else {
+            None
+        };
+
+        tracing::info!(
+            entropy_mode = entropy_mode.as_str(),
+            qrng_base_url = %qrng_base_url,
+            qrng_seed_size,
+            reseed_after_bytes,
+            hybrid_pool_size = ?hybrid_pool_size,
+            max_entropy_request_bytes = config::max_entropy_request_bytes(),
+            stage_timing_enabled = config::enable_stage_timing(),
+            "QEaaS auth server configuration"
+        );
+
         let entropy = match entropy_mode {
             EntropyMode::DirectQrng => {
                 EntropySource::direct_qrng(http.clone(), qrng_base_url.clone()).await
@@ -108,8 +127,8 @@ impl AppState {
                 EntropySource::hybrid_csprng(
                     http.clone(),
                     qrng_base_url.clone(),
-                    config::hybrid_qrng_seed_size(),
-                    config::hybrid_reseed_after_bytes(),
+                    qrng_seed_size,
+                    reseed_after_bytes,
                 )
                 .await?
             }
@@ -117,9 +136,9 @@ impl AppState {
                 EntropySource::parallel_hybrid(
                     http.clone(),
                     qrng_base_url.clone(),
-                    config::hybrid_qrng_seed_size(),
-                    config::hybrid_reseed_after_bytes(),
-                    config::hybrid_pool_size()?,
+                    qrng_seed_size,
+                    reseed_after_bytes,
+                    hybrid_pool_size.unwrap_or(8),
                 )
                 .await?
             }
@@ -136,5 +155,21 @@ impl AppState {
             devices: Arc::new(RwLock::new(HashMap::new())),
             nonce_cache,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NonceCache;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn nonce_cache_rejects_reuse_within_ttl() {
+        let cache = NonceCache::new(Duration::from_secs(60), 16);
+
+        assert!(cache.check_and_insert("device-1", "nonce-a").await);
+        assert!(!cache.check_and_insert("device-1", "nonce-a").await);
+        assert!(cache.check_and_insert("device-1", "nonce-b").await);
+        assert!(cache.check_and_insert("device-2", "nonce-a").await);
     }
 }
