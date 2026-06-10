@@ -42,6 +42,44 @@ The repository is organized around three main components:
 
 The QRNG is accessed through a local QRNG service node. In direct mode, the authenticated service requests QRNG bytes for each entropy request. In hybrid modes, QRNG output is used as seed material for ChaCha20-based CSPRNG state.
 
+## IoT Client CLI
+
+The `client_iot` crate provides a small standalone client for edge-client feasibility checks and development without requiring benchmark-client machinery. It uses the same enrollment, request signing, response verification, and decrypt path as the library code.
+
+Client credentials are stored under `client_iot/device_state/`. This directory contains generated private device credentials and is ignored by Git. Do not commit files from this directory.
+
+Default client settings:
+
+- Device ID: `iot-device-mac`.
+- Server URL: `QEAAAS_SERVER_URL`, then `AUTH_BASE`, then `http://127.0.0.1:3000`.
+- Request size: `32` bytes.
+
+Development-only dry runs validate CLI parsing and state-directory creation without calling the network:
+
+```sh
+cd client_iot
+cargo run -- --help
+cargo run -- enroll --dry-run
+cargo run -- request --n 32 --dry-run
+cargo run -- re-enroll --dry-run
+```
+
+Live client commands:
+
+```sh
+cd client_iot
+QEAAAS_SERVER_URL=http://127.0.0.1:3000 cargo run -- enroll
+QEAAAS_SERVER_URL=http://127.0.0.1:3000 cargo run -- request --n 32
+QEAAAS_SERVER_URL=http://127.0.0.1:3000 cargo run -- re-enroll
+```
+
+Optional flags:
+
+- `--server <URL>` overrides the server URL for one command.
+- `--device-id <ID>` selects a device-state file.
+- `--n <BYTES>` selects request size for `request`.
+- `--dry-run` avoids network calls for `enroll`, `request`, and `re-enroll`.
+
 ## Entropy Serving Configurations
 
 ### Config 1: Direct QRNG

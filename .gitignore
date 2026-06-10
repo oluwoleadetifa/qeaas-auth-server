@@ -17,6 +17,8 @@ users_*.jsonl
 *users.jsonl
 *users_*.jsonl
 users-*.jsonl
+device_state/
+**/device_state/
 
 # Generated benchmark results
 results/*.csv

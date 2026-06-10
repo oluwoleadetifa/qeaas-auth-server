@@ -11,6 +11,7 @@ pub struct DevicePq {
 
     pub kem_pk: kem::PublicKey,
     pub kem_sk: kem::SecretKey,
+    kem_sk_override: Option<Vec<u8>>,
 
     pub sig_pk: sig::PublicKey,
     pub sig_sk: sig::SecretKey,
@@ -34,6 +35,7 @@ impl DevicePq {
             sig_obj,
             kem_pk,
             kem_sk,
+            kem_sk_override: None,
             sig_pk,
             sig_sk,
             sig_sk_override: None,
@@ -83,16 +85,31 @@ impl DevicePq {
         Ok(())
     }
 
+    pub fn set_kem_sk(&mut self, kem_sk: Vec<u8>) -> anyhow::Result<()> {
+        self.kem_obj
+            .secret_key_from_bytes(&kem_sk)
+            .ok_or_else(|| anyhow!("client kem sk wrong length"))?;
+        self.kem_sk_override = Some(kem_sk);
+        Ok(())
+    }
+
     pub fn decapsulate(&self, ct_bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
         let ct_ref = self
             .kem_obj
             .ciphertext_from_bytes(ct_bytes)
             .ok_or_else(|| anyhow!("ciphertext wrong length"))?;
 
-        let ss = self
-            .kem_obj
-            .decapsulate(&self.kem_sk, ct_ref)
-            .context("client decapsulate failed")?;
+        let ss = match &self.kem_sk_override {
+            Some(kem_sk) => {
+                let kem_sk_ref = self
+                    .kem_obj
+                    .secret_key_from_bytes(kem_sk)
+                    .ok_or_else(|| anyhow!("client kem sk wrong length"))?;
+                self.kem_obj.decapsulate(kem_sk_ref, ct_ref)
+            }
+            None => self.kem_obj.decapsulate(&self.kem_sk, ct_ref),
+        }
+        .context("client decapsulate failed")?;
 
         Ok(ss.as_ref().to_vec())
     }

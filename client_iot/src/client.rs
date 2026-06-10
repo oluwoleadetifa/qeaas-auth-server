@@ -21,10 +21,24 @@ impl IotClient {
     }
 
     pub async fn enroll(&self, device_id: &str, pq: &DevicePq) -> anyhow::Result<EnrollResponse> {
+        self.enroll_with_public_keys(
+            device_id,
+            &general_purpose::STANDARD.encode(pq.kem_pk.as_ref()),
+            &general_purpose::STANDARD.encode(pq.sig_pk.as_ref()),
+        )
+        .await
+    }
+
+    pub async fn enroll_with_public_keys(
+        &self,
+        device_id: &str,
+        kem_pk_b64: &str,
+        sig_pk_b64: &str,
+    ) -> anyhow::Result<EnrollResponse> {
         let req = EnrollRequest {
             device_id: device_id.to_string(),
-            kem_pk_b64: general_purpose::STANDARD.encode(pq.kem_pk.as_ref()),
-            sig_pk_b64: general_purpose::STANDARD.encode(pq.sig_pk.as_ref()),
+            kem_pk_b64: kem_pk_b64.to_string(),
+            sig_pk_b64: sig_pk_b64.to_string(),
         };
 
         println!(
