@@ -21,6 +21,7 @@ device_state/
 **/device_state/
 
 # Generated benchmark results
+results/
 results/*.csv
 results/*.jsonl
 results/*.md

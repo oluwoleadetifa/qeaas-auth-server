@@ -7,7 +7,7 @@ fn env_any(names: &[&str]) -> Option<String> {
 }
 
 pub fn auth_addr() -> String {
-    std::env::var("AUTH_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string())
+    std::env::var("AUTH_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".to_string())
 }
 
 pub fn qrng_base_url() -> String {
