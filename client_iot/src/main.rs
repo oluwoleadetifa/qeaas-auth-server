@@ -10,6 +10,7 @@ use client_iot::{
 };
 use oqs::{kem, sig};
 use sha2::{Digest, Sha256};
+use std::time::Instant;
 
 const DEFAULT_DEVICE_ID: &str = "iot-device-mac";
 const DEFAULT_N: usize = 32;
@@ -27,6 +28,7 @@ struct CommandOptions {
     device_id: String,
     n: usize,
     dry_run: bool,
+    verbose: bool,
 }
 
 #[tokio::main]
@@ -63,7 +65,7 @@ async fn enroll(opts: CommandOptions) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let client = IotClient::new(opts.server);
+    let client = IotClient::with_verbose(opts.server, opts.verbose);
     let enroll_resp = if credentials_exist(&opts.device_id) {
         let credentials = load_device_credentials(&opts.device_id)?;
         let (kem_pk_b64, sig_pk_b64) = public_keys(&credentials);
@@ -79,8 +81,8 @@ async fn enroll(opts: CommandOptions) -> anyhow::Result<()> {
 
     save_enrollment_response(&opts.device_id, &enroll_resp)
         .context("failed to save enrollment response")?;
-    println!("Enrolled device {}", opts.device_id);
-    println!("Saved state to {}", state_path.display());
+    println!("Status: enrolled");
+    println!("Device ID: {}", opts.device_id);
     Ok(())
 }
 
@@ -112,16 +114,35 @@ async fn request(opts: CommandOptions) -> anyhow::Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow!("device state is missing server_sig_pk_b64; run enroll first"))?;
     let pq = device_pq_from_credentials(&credentials)?;
-    let client = IotClient::new(opts.server);
-    let (_resp, entropy) = client
-        .request_entropy(&opts.device_id, opts.n, &pq, server_sig_pk_b64)
+    let client = IotClient::with_verbose(opts.server, opts.verbose);
+    let mut timed = client
+        .request_entropy_timed(&opts.device_id, opts.n, &pq, server_sig_pk_b64)
         .await?;
 
-    let h = Sha256::digest(&entropy);
-    println!("OK");
-    println!("Device: {}", opts.device_id);
-    println!("Entropy bytes: {}", entropy.len());
+    let postprocess_start = Instant::now();
+    let entropy_len = timed.entropy.len();
+    let h = Sha256::digest(&timed.entropy);
+    timed.timing.client_postprocess_us = postprocess_start.elapsed().as_micros();
+
+    println!("Status: ok");
+    println!("Device ID: {}", opts.device_id);
+    println!("Entropy length: {}", entropy_len);
     println!("SHA256(entropy): {:x}", h);
+    println!("client_prepare_us: {}", timed.timing.client_prepare_us);
+    println!("client_decap_us: {}", timed.timing.client_decap_us);
+    println!("client_decrypt_us: {}", timed.timing.client_decrypt_us);
+    println!(
+        "client_response_verify_us: {}",
+        timed.timing.client_response_verify_us
+    );
+    println!(
+        "client_postprocess_us: {}",
+        timed.timing.client_postprocess_us
+    );
+    println!(
+        "end_to_end_usable_entropy_us: {}",
+        timed.timing.end_to_end_usable_entropy_us
+    );
     Ok(())
 }
 
@@ -142,13 +163,13 @@ async fn re_enroll(opts: CommandOptions) -> anyhow::Result<()> {
     let pq = new_device_pq()?;
     save_device_credentials(&opts.device_id, &pq)
         .context("failed to save replacement device credentials")?;
-    let client = IotClient::new(opts.server);
+    let client = IotClient::with_verbose(opts.server, opts.verbose);
     let enroll_resp = client.enroll(&opts.device_id, &pq).await?;
     save_enrollment_response(&opts.device_id, &enroll_resp)
         .context("failed to save enrollment response")?;
 
-    println!("Re-enrolled device {}", opts.device_id);
-    println!("Saved replacement state to {}", state_path.display());
+    println!("Status: re-enrolled");
+    println!("Device ID: {}", opts.device_id);
     Ok(())
 }
 
@@ -176,6 +197,7 @@ where
         device_id: std::env::var("DEVICE_ID").unwrap_or_else(|_| DEFAULT_DEVICE_ID.to_string()),
         n: DEFAULT_N,
         dry_run: false,
+        verbose: false,
     };
 
     while let Some(arg) = args.next() {
@@ -198,6 +220,7 @@ where
                     .context("--n must be a positive integer")?;
             }
             "--dry-run" => opts.dry_run = true,
+            "--verbose" => opts.verbose = true,
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -219,9 +242,9 @@ fn print_help() {
         r#"QEaaS IoT client
 
 USAGE:
-    cargo run -- enroll [--server <URL>] [--device-id <ID>] [--dry-run]
-    cargo run -- request [--server <URL>] [--device-id <ID>] [--n <BYTES>] [--dry-run]
-    cargo run -- re-enroll [--server <URL>] [--device-id <ID>] [--dry-run]
+    cargo run -- enroll [--server <URL>] [--device-id <ID>] [--dry-run] [--verbose]
+    cargo run -- request [--server <URL>] [--device-id <ID>] [--n <BYTES>] [--dry-run] [--verbose]
+    cargo run -- re-enroll [--server <URL>] [--device-id <ID>] [--dry-run] [--verbose]
 
 COMMANDS:
     enroll      Create state if missing, then enroll the device
@@ -232,6 +255,9 @@ DEFAULTS:
     device id:  iot-device-mac
     server URL: QEAAAS_SERVER_URL, then AUTH_BASE, then http://127.0.0.1:3000
     n:          32
+
+FLAGS:
+    --verbose   Print detailed enrollment/request JSON
 "#
     );
 }

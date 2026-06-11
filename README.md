@@ -79,6 +79,7 @@ Optional flags:
 - `--device-id <ID>` selects a device-state file.
 - `--n <BYTES>` selects request size for `request`.
 - `--dry-run` avoids network calls for `enroll`, `request`, and `re-enroll`.
+- `--verbose` prints detailed enrollment/request JSON. By default, the client does not print request JSON, enrollment JSON, private keys, or cryptographic transcripts.
 
 ## Entropy Serving Configurations
 
