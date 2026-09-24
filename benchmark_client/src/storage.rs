@@ -19,8 +19,7 @@ pub fn append_user(path: &str, user: &StoredUser) -> Result<()> {
 }
 
 pub fn load_users(path: &str) -> Result<Vec<StoredUser>> {
-    let file = File::open(path)
-        .with_context(|| format!("failed to open users file: {path}"))?;
+    let file = File::open(path).with_context(|| format!("failed to open users file: {path}"))?;
     let reader = BufReader::new(file);
 
     let mut users = Vec::new();
@@ -30,11 +29,10 @@ pub fn load_users(path: &str) -> Result<Vec<StoredUser>> {
         if line.trim().is_empty() {
             continue;
         }
-        let user: StoredUser = serde_json::from_str(&line)
-            .with_context(|| "failed to parse JSONL user record")?;
+        let user: StoredUser =
+            serde_json::from_str(&line).with_context(|| "failed to parse JSONL user record")?;
         users.push(user);
     }
 
     Ok(users)
 }
-

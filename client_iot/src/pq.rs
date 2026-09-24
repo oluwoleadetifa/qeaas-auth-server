@@ -11,9 +11,11 @@ pub struct DevicePq {
 
     pub kem_pk: kem::PublicKey,
     pub kem_sk: kem::SecretKey,
+    kem_sk_override: Option<Vec<u8>>,
 
     pub sig_pk: sig::PublicKey,
     pub sig_sk: sig::SecretKey,
+    sig_sk_override: Option<Vec<u8>>,
 }
 
 impl DevicePq {
@@ -33,8 +35,10 @@ impl DevicePq {
             sig_obj,
             kem_pk,
             kem_sk,
+            kem_sk_override: None,
             sig_pk,
             sig_sk,
+            sig_sk_override: None,
         })
     }
 
@@ -55,8 +59,38 @@ impl DevicePq {
     }
 
     pub fn sign(&self, msg: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let s = self.sig_obj.sign(msg, &self.sig_sk).context("client sign failed")?;
+        let s = match &self.sig_sk_override {
+            Some(sig_sk) => {
+                let sig_sk_ref = self
+                    .sig_obj
+                    .secret_key_from_bytes(sig_sk)
+                    .ok_or_else(|| anyhow!("client sig sk wrong length"))?;
+                self.sig_obj.sign(msg, sig_sk_ref)
+            }
+            None => self.sig_obj.sign(msg, &self.sig_sk),
+        }
+        .context("client sign failed")?;
         Ok(s.as_ref().to_vec())
+    }
+
+    pub fn sig_sk_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        Ok(self.sig_sk.as_ref().to_vec())
+    }
+
+    pub fn set_sig_sk(&mut self, sig_sk: Vec<u8>) -> anyhow::Result<()> {
+        self.sig_obj
+            .secret_key_from_bytes(&sig_sk)
+            .ok_or_else(|| anyhow!("client sig sk wrong length"))?;
+        self.sig_sk_override = Some(sig_sk);
+        Ok(())
+    }
+
+    pub fn set_kem_sk(&mut self, kem_sk: Vec<u8>) -> anyhow::Result<()> {
+        self.kem_obj
+            .secret_key_from_bytes(&kem_sk)
+            .ok_or_else(|| anyhow!("client kem sk wrong length"))?;
+        self.kem_sk_override = Some(kem_sk);
+        Ok(())
     }
 
     pub fn decapsulate(&self, ct_bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
@@ -65,10 +99,17 @@ impl DevicePq {
             .ciphertext_from_bytes(ct_bytes)
             .ok_or_else(|| anyhow!("ciphertext wrong length"))?;
 
-        let ss = self
-            .kem_obj
-            .decapsulate(&self.kem_sk, ct_ref)
-            .context("client decapsulate failed")?;
+        let ss = match &self.kem_sk_override {
+            Some(kem_sk) => {
+                let kem_sk_ref = self
+                    .kem_obj
+                    .secret_key_from_bytes(kem_sk)
+                    .ok_or_else(|| anyhow!("client kem sk wrong length"))?;
+                self.kem_obj.decapsulate(kem_sk_ref, ct_ref)
+            }
+            None => self.kem_obj.decapsulate(&self.kem_sk, ct_ref),
+        }
+        .context("client decapsulate failed")?;
 
         Ok(ss.as_ref().to_vec())
     }
@@ -89,7 +130,9 @@ impl DevicePq {
             .signature_from_bytes(server_sig_bytes)
             .ok_or_else(|| anyhow!("server signature wrong length"))?;
 
-        verifier.verify(tbs, sig_ref, pk_ref).context("server signature verify FAILED")?;
+        verifier
+            .verify(tbs, sig_ref, pk_ref)
+            .context("server signature verify FAILED")?;
         Ok(())
     }
 }
@@ -130,4 +173,3 @@ pub fn build_server_tbs(
     tbs.extend_from_slice(entropy_ct);
     tbs
 }
-

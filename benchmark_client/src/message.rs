@@ -42,3 +42,23 @@ pub fn sign_request(signing_ctx: &SigningContext, n: u32, nonce: &[u8]) -> Resul
 
     Ok(STANDARD.encode(sig))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::build_client_signed_message;
+
+    #[test]
+    fn canonical_message_matches_qeaas_format() {
+        let nonce = [0xabu8; 32];
+        let msg = build_client_signed_message("device-1", 1024, &nonce);
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(b"device-1");
+        expected.push(0);
+        expected.extend_from_slice(&(1024u64).to_le_bytes());
+        expected.push(0);
+        expected.extend_from_slice(&nonce);
+
+        assert_eq!(msg, expected);
+    }
+}

@@ -1,10 +1,7 @@
 use anyhow::{anyhow, Context};
 use base64::{engine::general_purpose, Engine as _};
 
-use oqs::{
-    kem,
-    sig,
-};
+use oqs::{kem, sig};
 
 /// Centralizes the PQ algorithms and server keys.
 ///
@@ -20,6 +17,7 @@ pub struct PqContext {
 
     // Server long-term keys
     kem_pk: kem::PublicKey,
+    #[allow(dead_code)]
     kem_sk: kem::SecretKey,
     sig_pk: sig::PublicKey,
     sig_sk: sig::SecretKey,
@@ -65,7 +63,10 @@ impl PqContext {
 
     /// Sign bytes with server SIG secret key. Returns raw signature bytes.
     pub fn sign(&self, msg: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let signature = self.sig.sign(msg, &self.sig_sk).context("sig.sign failed")?;
+        let signature = self
+            .sig
+            .sign(msg, &self.sig_sk)
+            .context("sig.sign failed")?;
         Ok(signature.as_ref().to_vec())
     }
 
@@ -107,18 +108,25 @@ impl PqContext {
             .public_key_from_bytes(client_kem_pk_bytes)
             .ok_or_else(|| anyhow!("client kem pk wrong length"))?;
 
-        let (ct, ss) = self.kem.encapsulate(pk_ref).context("kem.encapsulate failed")?;
+        let (ct, ss) = self
+            .kem
+            .encapsulate(pk_ref)
+            .context("kem.encapsulate failed")?;
         Ok((ct.as_ref().to_vec(), ss.as_ref().to_vec()))
     }
 
     /// Decapsulate ciphertext bytes using server KEM secret key.
+    #[allow(dead_code)]
     pub fn decapsulate_ct_bytes(&self, ct_bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
         let ct_ref = self
             .kem
             .ciphertext_from_bytes(ct_bytes)
             .ok_or_else(|| anyhow!("ciphertext wrong length"))?;
 
-        let ss = self.kem.decapsulate(&self.kem_sk, ct_ref).context("kem.decapsulate failed")?;
+        let ss = self
+            .kem
+            .decapsulate(&self.kem_sk, ct_ref)
+            .context("kem.decapsulate failed")?;
         Ok(ss.as_ref().to_vec())
     }
 }

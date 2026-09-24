@@ -28,6 +28,7 @@ tower-http = { version = "0.5", features = ["limit", "trace"] }
 
 async-trait = "0.1"
 rand = "0.8"
+rand_chacha = "0.3"
 
 hex = "0.4"
 hkdf = "0.12"

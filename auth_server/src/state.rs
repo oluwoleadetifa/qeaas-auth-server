@@ -5,13 +5,16 @@ use std::{
 };
 use tokio::sync::RwLock;
 
-use crate::{config, pq::PqContext};
+use crate::{
+    config,
+    entropy::{EntropyMode, EntropySource},
+    pq::PqContext,
+};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pq: Arc<PqContext>,
-    pub http: reqwest::Client,
-    pub qrng_base_url: String,
+    pub entropy: EntropySource,
 
     // device_id -> (kem_pk_bytes, sig_pk_bytes)
     pub devices: Arc<RwLock<HashMap<String, DeviceKeys>>>,
@@ -92,22 +95,81 @@ impl AppState {
         let pq = Arc::new(PqContext::new()?);
 
         let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(config::http_timeout())
             .build()?;
 
         let qrng_base_url = config::qrng_base_url();
+        let entropy_mode = config::entropy_mode()?;
+        let qrng_seed_size = config::hybrid_qrng_seed_size();
+        let reseed_after_bytes = config::hybrid_reseed_after_bytes();
+        let hybrid_pool_size = if matches!(entropy_mode, EntropyMode::ParallelHybrid) {
+            Some(config::hybrid_pool_size()?)
+        } else {
+            None
+        };
+
+        tracing::info!(
+            entropy_mode = entropy_mode.as_str(),
+            qrng_base_url = %qrng_base_url,
+            qrng_seed_size,
+            reseed_after_bytes,
+            hybrid_pool_size = ?hybrid_pool_size,
+            max_entropy_request_bytes = config::max_entropy_request_bytes(),
+            stage_timing_enabled = config::enable_stage_timing(),
+            "QEaaS auth server configuration"
+        );
+
+        let entropy = match entropy_mode {
+            EntropyMode::DirectQrng => {
+                EntropySource::direct_qrng(http.clone(), qrng_base_url.clone()).await
+            }
+            EntropyMode::HybridCsprng => {
+                EntropySource::hybrid_csprng(
+                    http.clone(),
+                    qrng_base_url.clone(),
+                    qrng_seed_size,
+                    reseed_after_bytes,
+                )
+                .await?
+            }
+            EntropyMode::ParallelHybrid => {
+                EntropySource::parallel_hybrid(
+                    http.clone(),
+                    qrng_base_url.clone(),
+                    qrng_seed_size,
+                    reseed_after_bytes,
+                    hybrid_pool_size.unwrap_or(8),
+                )
+                .await?
+            }
+        };
 
         // You can wire these from config.rs; for now use defaults if you don’t have them yet.
         let nonce_ttl = Duration::from_secs(config::nonce_ttl_secs()); // implement in config
-        let per_device_cap = config::nonce_per_device_cap();          // implement in config
+        let per_device_cap = config::nonce_per_device_cap(); // implement in config
         let nonce_cache = NonceCache::new(nonce_ttl, per_device_cap);
 
         Ok(Self {
             pq,
-            http,
-            qrng_base_url,
+            entropy,
             devices: Arc::new(RwLock::new(HashMap::new())),
             nonce_cache,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NonceCache;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn nonce_cache_rejects_reuse_within_ttl() {
+        let cache = NonceCache::new(Duration::from_secs(60), 16);
+
+        assert!(cache.check_and_insert("device-1", "nonce-a").await);
+        assert!(!cache.check_and_insert("device-1", "nonce-a").await);
+        assert!(cache.check_and_insert("device-1", "nonce-b").await);
+        assert!(cache.check_and_insert("device-2", "nonce-a").await);
     }
 }

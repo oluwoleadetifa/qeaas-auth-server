@@ -26,7 +26,13 @@ pub fn aead_decrypt(
     let nonce = Nonce::from_slice(nonce12);
 
     let pt = cipher
-        .decrypt(nonce, Payload { msg: ciphertext, aad })
+        .decrypt(
+            nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| anyhow!("aead decrypt failed"))?;
 
     Ok(pt)

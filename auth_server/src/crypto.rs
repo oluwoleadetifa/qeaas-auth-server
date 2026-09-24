@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
     ChaCha20Poly1305, Key, Nonce,
@@ -36,7 +36,13 @@ pub fn aead_encrypt(
     let nonce = Nonce::from_slice(nonce12);
 
     let ct = cipher
-        .encrypt(nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_e| anyhow!("aead encrypt failed"))?;
 
     Ok(ct)
